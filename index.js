@@ -1,3 +1,29 @@
+function decodeKwik(html) {
+  const m = html.match(/eval\(function\(Bc,gY,dX,gj,xA,DC\)\{[\s\S]+?\}\("([\s\S]+?)","[\s\S]*?",(\[[\s\S]+?\]),(\d+),(\d+)\)\)/);
+  if (!m) return null;
+
+  const Bc = m[1];
+  const dX = JSON.parse(m[2]);
+  const gj = parseInt(m[3]);
+  const xA = parseInt(m[4]);
+
+  let DC = "";
+  let i = 0;
+  while (i < Bc.length) {
+    let s = "";
+    while (Bc[i] !== dX[xA]) {
+      s += Bc[i];
+      i++;
+    }
+    for (let j = 0; j < dX.length; j++) {
+      s = s.split(dX[j]).join(String(j));
+    }
+    DC += String.fromCharCode(parseInt(s, xA) - gj);
+    i++;
+  }
+  return decodeURIComponent(escape(DC));
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -12,31 +38,18 @@ export default {
     });
 
     const html = await pageRes.text();
+    const decoded = decodeKwik(html);
 
-    // Extract any eval() call
-    const evalMatch = html.match(/eval\((function|\(function)[\s\S]+?\)\s*\)/);
-    if (!evalMatch) {
-      return new Response(JSON.stringify({error: "No eval found", tail: html.slice(-300)}));
+    if (!decoded) {
+      return new Response(JSON.stringify({error: "Decode failed", preview: html.slice(-500)}));
     }
 
-    let unpacked = "";
-    try {
-      const captureScript = evalMatch[0].replace(/^eval/, "unpacked =");
-      eval(captureScript);
-    } catch(e) {
-      return new Response(JSON.stringify({
-        error: "Eval failed: " + e.message,
-        eval_preview: evalMatch[0].slice(0, 300)
-      }));
-    }
-
-    const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
-    const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
-    const src = [...unpacked.matchAll(/source\s*=\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    const mp4 = [...decoded.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
+    const m3u8 = [...decoded.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
 
     return new Response(JSON.stringify({
-      mp4, m3u8, src,
-      unpacked_preview: unpacked.slice(0, 1000)
+      mp4, m3u8,
+      decoded_preview: decoded.slice(0, 500)
     }));
   }
 };
