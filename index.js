@@ -14,15 +14,6 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
-function unpackPacd(p, a, c, k) {
-  const e = (c) => (c < a ? '' : e(parseInt(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
-  const keys = k.split('|');
-  while (c--) {
-    if (keys[c]) p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), keys[c]);
-  }
-  return p;
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -51,21 +42,16 @@ export default {
     });
     const eHtml = await eRes.text();
 
-    // Decode ALL pacd scripts
     const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-    const results = [];
 
-    for (let i = 0; i < scripts.length; i++) {
-      const s = scripts[i];
-      const m = s.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
-      if (m) {
-        const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
-        const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(x => x[0]);
-        const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
-        results.push({script_idx: i, mp4, m3u8, preview: unpacked.slice(0, 300)});
-      }
-    }
-
-    return new Response(JSON.stringify({e_url: eUrl, results}));
+    // Return preview of each script
+    return new Response(JSON.stringify({
+      count: scripts.length,
+      scripts: scripts.map((s, i) => ({
+        idx: i,
+        len: s.length,
+        preview: s.trim().slice(0, 200)
+      }))
+    }));
   }
 };
