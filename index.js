@@ -1,5 +1,4 @@
 function tryDecode(Bc, gY, dX_str, gj, xA) {
-  // dX is the separator string, each char is a separator
   const dX = dX_str.split("");
   let DC = "";
   let i = 0;
@@ -16,10 +15,22 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
       DC += String.fromCharCode(parseInt(s, xA) - gj);
       i++;
     }
-  } catch(e) {
-    return "decode_error: " + e.message;
-  }
+  } catch(e) { return "decode_error: " + e.message; }
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
+}
+
+async function fetchAndDecode(url, referer) {
+  const res = await fetch(url, {
+    headers: {
+      "Referer": referer,
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+    }
+  });
+  const html = await res.text();
+  const m = html.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
+  if (!m) return { html, decoded: null };
+  const decoded = tryDecode(m[1], parseInt(m[2]), m[3], parseInt(m[4]), parseInt(m[5]));
+  return { html, decoded };
 }
 
 export default {
@@ -28,38 +39,30 @@ export default {
     const kwikUrl = url.searchParams.get("url");
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    const pageRes = await fetch(kwikUrl, {
-      headers: {
-        "Referer": "https://animepahe.pw/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      }
-    });
+    // Step 1: fetch /f/ page to get /e/ url
+    const { decoded: fDecoded } = await fetchAndDecode(kwikUrl, "https://animepahe.pw/");
+    if (!fDecoded) return new Response(JSON.stringify({error: "f page decode failed"}));
 
-    const html = await pageRes.text();
+    // Extract /e/ url
+    const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
+    if (!eMatch) return new Response(JSON.stringify({error: "e url not found", preview: fDecoded.slice(0,300)}));
 
-    // Match: ("encoded_bc", gY, "dX_string", gj, xA, last_num))
-    const m = html.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-    if (!m) {
-      return new Response(JSON.stringify({error: "No match", tail: html.slice(-200)}));
-    }
+    const eUrl = "https://kwik.cx" + eMatch[1];
+    console.log("e url:", eUrl);
 
-    const Bc = m[1];
-    const gY = parseInt(m[2]);
-    const dX_str = m[3];
-    const gj = parseInt(m[4]);
-    const xA = parseInt(m[5]);
+    // Step 2: fetch /e/ page and decode
+    const { decoded: eDecoded } = await fetchAndDecode(eUrl, kwikUrl);
+    if (!eDecoded) return new Response(JSON.stringify({error: "e page decode failed"}));
 
-    console.log("dX_str:", dX_str, "gj:", gj, "xA:", xA);
-
-    const decoded = tryDecode(Bc, gY, dX_str, gj, xA);
-
-    const mp4 = [...decoded.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
-    const m3u8 = [...decoded.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
+    // Extract mp4/m3u8
+    const mp4 = [...eDecoded.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
+    const m3u8 = [...eDecoded.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
+    const src = [...eDecoded.matchAll(/source\s*[=:]\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
 
     return new Response(JSON.stringify({
-      mp4, m3u8,
-      decoded_preview: decoded.slice(0, 500),
-      dX_str, gj, xA
+      e_url: eUrl,
+      mp4, m3u8, src,
+      decoded_preview: eDecoded.slice(0, 1000)
     }));
   }
 };
