@@ -13,23 +13,30 @@ export default {
 
     const html = await pageRes.text();
 
-    // Look for video sources
-    const mp4 = [...html.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
-    const m3u8 = [...html.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
-    const source = [...html.matchAll(/source:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
-    const file = [...html.matchAll(/file:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    // Extract the packed script
+    const packedMatch = html.match(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s);
+    if (!packedMatch) {
+      return new Response(JSON.stringify({error: "No packed script found", tail: html.slice(-500)}));
+    }
 
-    // Get the script section
-    const scriptSection = html.match(/<script[^>]*>([\s\S]*?)<\/script>/g) || [];
+    // Eval the packed script to unpack it
+    let unpacked = "";
+    try {
+      // Replace eval with a capture
+      const captureScript = packedMatch[0].replace(/^eval/, "unpacked =");
+      eval(captureScript);
+    } catch(e) {
+      return new Response(JSON.stringify({error: "Eval failed: " + e.message, packed: packedMatch[0].slice(0, 200)}));
+    }
+
+    // Find mp4/m3u8 in unpacked
+    const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
+    const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
 
     return new Response(JSON.stringify({
       mp4,
       m3u8,
-      source,
-      file,
-      scripts_count: scriptSection.length,
-      // dump last 2000 chars where video url usually is
-      tail: html.slice(-2000)
+      unpacked_preview: unpacked.slice(0, 1000)
     }));
   }
 };
