@@ -48,16 +48,28 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const kwikUrl = url.searchParams.get("url");
+    const keyUrl = url.searchParams.get("key");
+
+    // Key download mode
+    if (keyUrl) {
+      const keyRes = await fetch(keyUrl, {
+        headers: {
+          "Referer": "https://kwik.cx/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        }
+      });
+      const keyData = await keyRes.arrayBuffer();
+      return new Response(keyData, {
+        headers: {"Content-Type": "application/octet-stream"}
+      });
+    }
+
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
     let m3u8 = [];
-
     if (kwikUrl.includes("/e/")) {
-      // Direct /e/ embed link
       m3u8 = await getM3u8FromEmbed(kwikUrl, "https://animepahe.pw/");
-
     } else if (kwikUrl.includes("/f/")) {
-      // /f/ download page - decode to get /e/ url
       const fRes = await fetch(kwikUrl, {
         headers: {
           "Referer": "https://animepahe.pw/",
@@ -66,12 +78,11 @@ export default {
       });
       const fHtml = await fRes.text();
       const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-      if (!fm) return new Response(JSON.stringify({error: "f decode failed", tail: fHtml.slice(-200)}));
+      if (!fm) return new Response(JSON.stringify({error: "f decode failed"}));
       const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
       const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
-      if (!eMatch) return new Response(JSON.stringify({error: "e url not found", preview: fDecoded.slice(0,300)}));
-      const eUrl = "https://kwik.cx" + eMatch[1];
-      m3u8 = await getM3u8FromEmbed(eUrl, kwikUrl);
+      if (!eMatch) return new Response(JSON.stringify({error: "e url not found"}));
+      m3u8 = await getM3u8FromEmbed("https://kwik.cx" + eMatch[1], kwikUrl);
     }
 
     return new Response(JSON.stringify({m3u8}));
