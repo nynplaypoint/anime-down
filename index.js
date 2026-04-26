@@ -19,21 +19,6 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
-function decodeP(html) {
-  // Standard p,a,c,k,e,d packer
-  const m = html.match(/\(function\(p,a,c,k,e,d\)[\s\S]+?'([^']{50,})'\.split\('\|'\),(\d+),\{\}\)\)/);
-  if (!m) return null;
-  const words = m[1].split('|');
-  const packed = html.match(/\(function\(p,a,c,k,e,d\)([\s\S]+?'[^']+?'\.split)/);
-  if (!packed) return null;
-  
-  // Get the encoded string and count
-  const em = html.match(/\b(\w+)\|(\w+)\|(\w+)\|/);
-  
-  // Just return the split words to find urls
-  return words.join(' ');
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -49,7 +34,7 @@ export default {
     });
     const fHtml = await fRes.text();
     const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-    if (!fm) return new Response(JSON.stringify({error: "f decode failed", tail: fHtml.slice(-200)}));
+    if (!fm) return new Response(JSON.stringify({error: "f decode failed"}));
     const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
     const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
     if (!eMatch) return new Response(JSON.stringify({error: "e url not found"}));
@@ -64,29 +49,27 @@ export default {
     });
     const eHtml = await eRes.text();
 
-    // Extract from split('|') packer
-    const splitMatch = eHtml.match(/'([^']{100,})'\.split\('\|'\)/);
-    if (!splitMatch) return new Response(JSON.stringify({error: "split match failed", tail: eHtml.slice(-500)}));
+    // Find ALL script tags and decode each one
+    const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
     
-    const words = splitMatch[1].split('|');
-    
-    // Find m3u8 url parts - look for vault/uwucdn + hash
-    const hashMatch = words.find(w => w.length === 64); // sha256 hash
-    const domain = words.find(w => w.includes('uwucdn') || w.includes('vault'));
-    const m3u8Word = words.find(w => w === 'm3u8');
-    
-    // Find full url by looking for https pattern in words
-    const httpsIdx = words.lastIndexOf('https');
-    
+    const results = [];
+    for (const script of scripts) {
+      // Try custom decoder
+      const cm = script.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
+      if (cm) {
+        const decoded = tryDecode(cm[1], parseInt(cm[2]), cm[3], parseInt(cm[4]), parseInt(cm[5]));
+        results.push({type: "custom", decoded: decoded.slice(0, 500)});
+      }
+      // Look for uwu/vault/m3u8 directly
+      if (script.includes('uwu') || script.includes('vault') || script.includes('m3u8') || script.includes('stream')) {
+        results.push({type: "raw", preview: script.slice(0, 500)});
+      }
+    }
+
     return new Response(JSON.stringify({
       e_url: eUrl,
-      words_count: words.length,
-      hash: hashMatch,
-      domain,
-      https_idx: httpsIdx,
-      // show words around https
-      url_words: httpsIdx >= 0 ? words.slice(Math.max(0,httpsIdx-2), httpsIdx+10) : [],
-      all_words: words
+      scripts_count: scripts.length,
+      results
     }));
   }
 };
