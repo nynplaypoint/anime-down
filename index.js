@@ -24,60 +24,56 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
+async function getM3u8FromEmbed(eUrl, referer) {
+  const eRes = await fetch(eUrl, {
+    headers: {
+      "Referer": referer,
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+    }
+  });
+  const eHtml = await eRes.text();
+  const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  for (const script of scripts) {
+    const m = script.match(/\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\('\|'\)/);
+    if (m) {
+      const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
+      const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
+      if (m3u8.length > 0) return m3u8;
+    }
+  }
+  return [];
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const kwikUrl = url.searchParams.get("url");
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    const fRes = await fetch(kwikUrl, {
-      headers: {
-        "Referer": "https://animepahe.pw/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      }
-    });
-    const fHtml = await fRes.text();
-    const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-    if (!fm) return new Response(JSON.stringify({error: "f decode failed"}));
-    const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
-    const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
-    if (!eMatch) return new Response(JSON.stringify({error: "e url not found"}));
-    const eUrl = "https://kwik.cx" + eMatch[1];
+    let m3u8 = [];
 
-    const eRes = await fetch(eUrl, {
-      headers: {
-        "Referer": kwikUrl,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      }
-    });
-    const eHtml = await eRes.text();
+    if (kwikUrl.includes("/e/")) {
+      // Direct /e/ embed link
+      m3u8 = await getM3u8FromEmbed(kwikUrl, "https://animepahe.pw/");
 
-    // Get script 5 raw
-    const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-    const script5 = scripts[5] || "";
-
-    // Try all possible pacd patterns
-    const patterns = [
-      /\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\('\|'\)/,
-      /\("([\s\S]+)",(\d+),(\d+),"([\s\S]+)"\.split\('\|'\)/,
-      /\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\("\|"\)/,
-    ];
-
-    for (const pat of patterns) {
-      const m = script5.match(pat);
-      if (m) {
-        const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
-        const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(x => x[0]);
-        const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
-        return new Response(JSON.stringify({mp4, m3u8, unpacked_preview: unpacked.slice(0, 1000)}));
-      }
+    } else if (kwikUrl.includes("/f/")) {
+      // /f/ download page - decode to get /e/ url
+      const fRes = await fetch(kwikUrl, {
+        headers: {
+          "Referer": "https://animepahe.pw/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        }
+      });
+      const fHtml = await fRes.text();
+      const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
+      if (!fm) return new Response(JSON.stringify({error: "f decode failed", tail: fHtml.slice(-200)}));
+      const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
+      const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
+      if (!eMatch) return new Response(JSON.stringify({error: "e url not found", preview: fDecoded.slice(0,300)}));
+      const eUrl = "https://kwik.cx" + eMatch[1];
+      m3u8 = await getM3u8FromEmbed(eUrl, kwikUrl);
     }
 
-    // Return raw script5 tail to see the args
-    return new Response(JSON.stringify({
-      error: "no pattern matched",
-      script5_tail: script5.slice(-500),
-      script5_head: script5.slice(0, 200)
-    }));
+    return new Response(JSON.stringify({m3u8}));
   }
 };
