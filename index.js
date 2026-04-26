@@ -19,50 +19,45 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
-async function fetchAndDecode(url, referer) {
-  const res = await fetch(url, {
-    headers: {
-      "Referer": referer,
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    }
-  });
-  const html = await res.text();
-  const m = html.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-  if (!m) return { html, decoded: null };
-  const decoded = tryDecode(m[1], parseInt(m[2]), m[3], parseInt(m[4]), parseInt(m[5]));
-  return { html, decoded };
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const kwikUrl = url.searchParams.get("url");
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    // Step 1: fetch /f/ page to get /e/ url
-    const { decoded: fDecoded } = await fetchAndDecode(kwikUrl, "https://animepahe.pw/");
-    if (!fDecoded) return new Response(JSON.stringify({error: "f page decode failed"}));
+    // Step 1: fetch /f/ page
+    const fRes = await fetch(kwikUrl, {
+      headers: {
+        "Referer": "https://animepahe.pw/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      }
+    });
+    const fHtml = await fRes.text();
+    const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
+    if (!fm) return new Response(JSON.stringify({error: "f decode failed", tail: fHtml.slice(-200)}));
+    const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
 
-    // Extract /e/ url
     const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
     if (!eMatch) return new Response(JSON.stringify({error: "e url not found", preview: fDecoded.slice(0,300)}));
 
     const eUrl = "https://kwik.cx" + eMatch[1];
-    console.log("e url:", eUrl);
 
-    // Step 2: fetch /e/ page and decode
-    const { decoded: eDecoded } = await fetchAndDecode(eUrl, kwikUrl);
-    if (!eDecoded) return new Response(JSON.stringify({error: "e page decode failed"}));
-
-    // Extract mp4/m3u8
-    const mp4 = [...eDecoded.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
-    const m3u8 = [...eDecoded.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
-    const src = [...eDecoded.matchAll(/source\s*[=:]\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    // Step 2: fetch /e/ page
+    const eRes = await fetch(eUrl, {
+      headers: {
+        "Referer": kwikUrl,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      }
+    });
+    const eHtml = await eRes.text();
+    const em = eHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
 
     return new Response(JSON.stringify({
       e_url: eUrl,
-      mp4, m3u8, src,
-      decoded_preview: eDecoded.slice(0, 1000)
+      e_status: eRes.status,
+      e_has_packed: !!em,
+      e_preview: eHtml.slice(0, 500),
+      e_tail: eHtml.slice(-300)
     }));
   }
 };
