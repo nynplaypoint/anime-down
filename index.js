@@ -13,19 +13,23 @@ export default {
 
     const html = await pageRes.text();
 
-    // Search for token in different formats
-    const t1 = html.match(/name="_token"\s+value="([^"]+)"/);
-    const t2 = html.match(/_token['":\s]+['"]([^'"]{10,})['"]/);
-    const t3 = html.match(/token['":\s]+['"]([^'"]{10,})['"]/i);
-    const forms = html.match(/<form[^>]+action="([^"]+)"/);
+    // Look for video sources
+    const mp4 = [...html.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
+    const m3u8 = [...html.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
+    const source = [...html.matchAll(/source:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    const file = [...html.matchAll(/file:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+
+    // Get the script section
+    const scriptSection = html.match(/<script[^>]*>([\s\S]*?)<\/script>/g) || [];
 
     return new Response(JSON.stringify({
-      status: pageRes.status,
-      t1: t1 ? t1[1] : null,
-      t2: t2 ? t2[1] : null,
-      t3: t3 ? t3[1] : null,
-      form_action: forms ? forms[1] : null,
-      preview: html.slice(0, 2000)
+      mp4,
+      m3u8,
+      source,
+      file,
+      scripts_count: scriptSection.length,
+      // dump last 2000 chars where video url usually is
+      tail: html.slice(-2000)
     }));
   }
 };
