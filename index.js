@@ -4,7 +4,7 @@ export default {
     const kwikUrl = url.searchParams.get("url");
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    const pageRes = await fetch(kwikUrl.replace("/e/", "/f/"), {
+    const pageRes = await fetch(kwikUrl, {
       headers: {
         "Referer": "https://animepahe.pw/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -12,27 +12,20 @@ export default {
     });
 
     const html = await pageRes.text();
-    const tokenMatch = html.match(/name="_token"\s+value="([^"]+)"/);
-    if (!tokenMatch) return new Response(JSON.stringify({error: "Token not found", preview: html.slice(0,300)}));
 
-    const token = tokenMatch[1];
-    const cookies = pageRes.headers.get("set-cookie") || "";
+    // Search for token in different formats
+    const t1 = html.match(/name="_token"\s+value="([^"]+)"/);
+    const t2 = html.match(/_token['":\s]+['"]([^'"]{10,})['"]/);
+    const t3 = html.match(/token['":\s]+['"]([^'"]{10,})['"]/i);
+    const forms = html.match(/<form[^>]+action="([^"]+)"/);
 
-    const postRes = await fetch(kwikUrl.replace("/e/", "/f/"), {
-      method: "POST",
-      headers: {
-        "Referer": kwikUrl.replace("/e/", "/f/"),
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-        "Cookie": cookies,
-      },
-      body: `_token=${encodeURIComponent(token)}`,
-      redirect: "manual",
-    });
-
-    const mp4Url = postRes.headers.get("location");
-    if (!mp4Url) return new Response(JSON.stringify({error: "No redirect", post_status: postRes.status, preview: (await postRes.text()).slice(0,300)}));
-
-    return new Response(JSON.stringify({mp4_url: mp4Url}));
+    return new Response(JSON.stringify({
+      status: pageRes.status,
+      t1: t1 ? t1[1] : null,
+      t2: t2 ? t2[1] : null,
+      t3: t3 ? t3[1] : null,
+      form_action: forms ? forms[1] : null,
+      preview: html.slice(0, 2000)
+    }));
   }
 };
