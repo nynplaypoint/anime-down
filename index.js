@@ -13,29 +13,29 @@ export default {
 
     const html = await pageRes.text();
 
-    // Extract the packed script
-    const packedMatch = html.match(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s);
-    if (!packedMatch) {
-      return new Response(JSON.stringify({error: "No packed script found", tail: html.slice(-500)}));
+    // Extract any eval() call
+    const evalMatch = html.match(/eval\((function|\(function)[\s\S]+?\)\s*\)/);
+    if (!evalMatch) {
+      return new Response(JSON.stringify({error: "No eval found", tail: html.slice(-300)}));
     }
 
-    // Eval the packed script to unpack it
     let unpacked = "";
     try {
-      // Replace eval with a capture
-      const captureScript = packedMatch[0].replace(/^eval/, "unpacked =");
+      const captureScript = evalMatch[0].replace(/^eval/, "unpacked =");
       eval(captureScript);
     } catch(e) {
-      return new Response(JSON.stringify({error: "Eval failed: " + e.message, packed: packedMatch[0].slice(0, 200)}));
+      return new Response(JSON.stringify({
+        error: "Eval failed: " + e.message,
+        eval_preview: evalMatch[0].slice(0, 300)
+      }));
     }
 
-    // Find mp4/m3u8 in unpacked
     const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
     const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
+    const src = [...unpacked.matchAll(/source\s*=\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
 
     return new Response(JSON.stringify({
-      mp4,
-      m3u8,
+      mp4, m3u8, src,
       unpacked_preview: unpacked.slice(0, 1000)
     }));
   }
