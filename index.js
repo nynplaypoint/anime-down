@@ -1,3 +1,13 @@
+function unpackPacd(p, a, c, k) {
+  const e = (n) => (n < a ? '' : e(parseInt(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
+  const keys = k.split('|');
+  let cc = c;
+  while (cc--) {
+    if (keys[cc]) p = p.replace(new RegExp('\\b' + e(cc) + '\\b', 'g'), keys[cc]);
+  }
+  return p;
+}
+
 function tryDecode(Bc, gY, dX_str, gj, xA) {
   const dX = dX_str.split("");
   let DC = "";
@@ -42,16 +52,32 @@ export default {
     });
     const eHtml = await eRes.text();
 
+    // Get script 5 raw
     const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    const script5 = scripts[5] || "";
 
-    // Return preview of each script
+    // Try all possible pacd patterns
+    const patterns = [
+      /\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\('\|'\)/,
+      /\("([\s\S]+)",(\d+),(\d+),"([\s\S]+)"\.split\('\|'\)/,
+      /\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\("\|"\)/,
+    ];
+
+    for (const pat of patterns) {
+      const m = script5.match(pat);
+      if (m) {
+        const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
+        const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(x => x[0]);
+        const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
+        return new Response(JSON.stringify({mp4, m3u8, unpacked_preview: unpacked.slice(0, 1000)}));
+      }
+    }
+
+    // Return raw script5 tail to see the args
     return new Response(JSON.stringify({
-      count: scripts.length,
-      scripts: scripts.map((s, i) => ({
-        idx: i,
-        len: s.length,
-        preview: s.trim().slice(0, 200)
-      }))
+      error: "no pattern matched",
+      script5_tail: script5.slice(-500),
+      script5_head: script5.slice(0, 200)
     }));
   }
 };
