@@ -18,9 +18,7 @@ function unpackPacd(p, a, c, k) {
   const e = (c) => (c < a ? '' : e(parseInt(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
   const keys = k.split('|');
   while (c--) {
-    if (keys[c]) {
-      p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), keys[c]);
-    }
+    if (keys[c]) p = p.replace(new RegExp('\\b' + e(c) + '\\b', 'g'), keys[c]);
   }
   return p;
 }
@@ -31,7 +29,6 @@ export default {
     const kwikUrl = url.searchParams.get("url");
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    // Step 1: fetch /f/ page
     const fRes = await fetch(kwikUrl, {
       headers: {
         "Referer": "https://animepahe.pw/",
@@ -40,13 +37,12 @@ export default {
     });
     const fHtml = await fRes.text();
     const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
-    if (!fm) return new Response(JSON.stringify({error: "f decode failed", tail: fHtml.slice(-200)}));
+    if (!fm) return new Response(JSON.stringify({error: "f decode failed"}));
     const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
     const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
     if (!eMatch) return new Response(JSON.stringify({error: "e url not found"}));
     const eUrl = "https://kwik.cx" + eMatch[1];
 
-    // Step 2: fetch /e/ page
     const eRes = await fetch(eUrl, {
       headers: {
         "Referer": kwikUrl,
@@ -55,21 +51,21 @@ export default {
     });
     const eHtml = await eRes.text();
 
-    // Find p,a,c,k,e,d packer
-    const packMatch = eHtml.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
-    if (!packMatch) {
-      return new Response(JSON.stringify({error: "pacd not found", tail: eHtml.slice(-300)}));
+    // Decode ALL pacd scripts
+    const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    const results = [];
+
+    for (let i = 0; i < scripts.length; i++) {
+      const s = scripts[i];
+      const m = s.match(/\('([^']+)',(\d+),(\d+),'([^']+)'\.split\('\|'\)/);
+      if (m) {
+        const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
+        const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(x => x[0]);
+        const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
+        results.push({script_idx: i, mp4, m3u8, preview: unpacked.slice(0, 300)});
+      }
     }
 
-    const unpacked = unpackPacd(packMatch[1], parseInt(packMatch[2]), parseInt(packMatch[3]), packMatch[4]);
-
-    const mp4 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/g)].map(m => m[0]);
-    const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(m => m[0]);
-    const src = [...unpacked.matchAll(/src['":\s]+['"]([^'"]+)['"]/g)].map(m => m[1]);
-
-    return new Response(JSON.stringify({
-      mp4, m3u8, src,
-      unpacked_preview: unpacked.slice(0, 1000)
-    }));
+    return new Response(JSON.stringify({e_url: eUrl, results}));
   }
 };
