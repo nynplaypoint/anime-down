@@ -24,6 +24,22 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
+function extractFilename(html) {
+  // Try <title>AnimePahe_xxx.mp4</title>
+  const titleMatch = html.match(/<title>([^<]+\.mp4)<\/title>/i);
+  if (titleMatch) return titleMatch[1].trim();
+
+  // Try og:title meta tag
+  const ogMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+\.mp4)["']/i);
+  if (ogMatch) return ogMatch[1].trim();
+
+  // Try any visible filename pattern in the HTML
+  const fnMatch = html.match(/AnimePahe_[A-Za-z0-9_\-\.]+\.mp4/);
+  if (fnMatch) return fnMatch[0].trim();
+
+  return null;
+}
+
 async function getM3u8FromEmbed(eUrl, referer) {
   const eRes = await fetch(eUrl, {
     headers: {
@@ -32,16 +48,20 @@ async function getM3u8FromEmbed(eUrl, referer) {
     }
   });
   const eHtml = await eRes.text();
+
+  // Extract filename from embed page
+  const filename = extractFilename(eHtml);
+
   const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   for (const script of scripts) {
     const m = script.match(/\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\('\|'\)/);
     if (m) {
       const unpacked = unpackPacd(m[1], parseInt(m[2]), parseInt(m[3]), m[4]);
       const m3u8 = [...unpacked.matchAll(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/g)].map(x => x[0]);
-      if (m3u8.length > 0) return m3u8;
+      if (m3u8.length > 0) return { m3u8, filename };
     }
   }
-  return [];
+  return { m3u8: [], filename };
 }
 
 export default {
@@ -66,9 +86,11 @@ export default {
 
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url"}), {status: 400});
 
-    let m3u8 = [];
+    let result = { m3u8: [], filename: null };
+
     if (kwikUrl.includes("/e/")) {
-      m3u8 = await getM3u8FromEmbed(kwikUrl, "https://animepahe.pw/");
+      result = await getM3u8FromEmbed(kwikUrl, "https://animepahe.pw/");
+
     } else if (kwikUrl.includes("/f/")) {
       const fRes = await fetch(kwikUrl, {
         headers: {
@@ -77,14 +99,24 @@ export default {
         }
       });
       const fHtml = await fRes.text();
+
+      // Try to get filename from /f/ page too
+      const fFilename = extractFilename(fHtml);
+
       const fm = fHtml.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
       if (!fm) return new Response(JSON.stringify({error: "f decode failed"}));
       const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
       const eMatch = fDecoded.match(/var url = '(\/e\/[^']+)'/);
       if (!eMatch) return new Response(JSON.stringify({error: "e url not found"}));
-      m3u8 = await getM3u8FromEmbed("https://kwik.cx" + eMatch[1], kwikUrl);
+
+      result = await getM3u8FromEmbed("https://kwik.cx" + eMatch[1], kwikUrl);
+
+      // Prefer filename from /f/ page since it shows in browser title
+      if (fFilename) result.filename = fFilename;
     }
 
-    return new Response(JSON.stringify({m3u8}));
+    return new Response(JSON.stringify({ m3u8: result.m3u8, filename: result.filename }), {
+      headers: {"Content-Type": "application/json"}
+    });
   }
 };
