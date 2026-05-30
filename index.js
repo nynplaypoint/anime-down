@@ -1,4 +1,3 @@
-// Function to unpack p.a.c.k.e.r
 function unpackPacd(p, a, c, k) {
   const e = (n) => (n < a ? '' : e(parseInt(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
   const keys = k.split('|');
@@ -9,7 +8,6 @@ function unpackPacd(p, a, c, k) {
   return p;
 }
 
-// Function to decode Kwik's custom encoding
 function tryDecode(Bc, gY, dX_str, gj, xA) {
   const dX = dX_str.split("");
   let DC = "";
@@ -26,15 +24,41 @@ function tryDecode(Bc, gY, dX_str, gj, xA) {
   try { return decodeURIComponent(escape(DC)); } catch(e) { return DC; }
 }
 
+async function fetchHtml(targetUrl, referer) {
+  // Try direct fetch first
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": referer,
+    "Origin": new URL(referer).origin,
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Upgrade-Insecure-Requests": "1",
+  };
+
+  const res = await fetch(targetUrl, { headers, redirect: "follow" });
+  const html = await res.text();
+
+  // Check if CF blocked
+  if (html.includes("Attention Required") || html.includes("Just a moment") || html.includes("cf-browser-verification")) {
+    // Try via allorigins proxy
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+    const proxyRes = await fetch(proxyUrl);
+    const proxyData = await proxyRes.json();
+    return proxyData.contents || "";
+  }
+
+  return html;
+}
+
 async function getM3u8FromEmbed(eUrl, referer) {
   try {
-    const eRes = await fetch(eUrl, {
-      headers: {
-        "Referer": referer,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      }
-    });
-    const eHtml = await eRes.text();
+    const eHtml = await fetchHtml(eUrl, referer);
     const scripts = [...eHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
     for (const script of scripts) {
       const m = script.match(/\('([\s\S]+)',(\d+),(\d+),'([\s\S]+)'\.split\('\|'\)/);
@@ -54,12 +78,11 @@ export default {
     const kwikUrl = url.searchParams.get("url");
     const keyUrl = url.searchParams.get("key");
 
-    // Handle Key requests for decryption
     if (keyUrl) {
       const keyRes = await fetch(keyUrl, {
-        headers: { 
-          "Referer": "https://kwik.cx/", 
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" 
+        headers: {
+          "Referer": "https://kwik.cx/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
         }
       });
       const keyData = await keyRes.arrayBuffer();
@@ -69,24 +92,23 @@ export default {
     if (!kwikUrl) return new Response(JSON.stringify({error: "No url provided"}), { status: 400 });
 
     let m3u8 = [];
-    let pageTitle = "Unknown";
+    let pageTitle = null;
 
     try {
-      const res = await fetch(kwikUrl, {
-        headers: {
-          "Referer": "https://animepahe.pw/",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-        }
-      });
-      const html = await res.text();
+      const html = await fetchHtml(kwikUrl, "https://animepahe.pw/");
 
-      // --- TITLE EXTRACTION ---
-      const tMatch = html.match(/<title>(.*?)<\/title>/);
+      // Title extraction
+      const tMatch = html.match(/<title>(.*?)<\/title>/i);
       if (tMatch) {
-        pageTitle = tMatch[1].replace("Watch ", "").replace(" - Kwik", "").trim();
+        pageTitle = tMatch[1]
+          .replace(/^Watch\s+/i, "")
+          .replace(/\s*-\s*Kwik\s*$/i, "")
+          .trim();
+        if (pageTitle.toLowerCase().includes("attention") || pageTitle.toLowerCase().includes("just a moment")) {
+          pageTitle = null;
+        }
       }
 
-      // Handle Embed links directly
       if (kwikUrl.includes("/e/")) {
         const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
         for (const script of scripts) {
@@ -97,9 +119,7 @@ export default {
             if (m3u8.length > 0) break;
           }
         }
-      } 
-      // Handle File links by finding the inner embed
-      else if (kwikUrl.includes("/f/")) {
+      } else if (kwikUrl.includes("/f/")) {
         const fm = html.match(/\("([^"]{50,})",(\d+),"([^"]{5,})",(\d+),(\d+),(\d+)\)\)/);
         if (fm) {
           const fDecoded = tryDecode(fm[1], parseInt(fm[2]), fm[3], parseInt(fm[4]), parseInt(fm[5]));
@@ -110,10 +130,9 @@ export default {
         }
       }
     } catch (e) {
-      return new Response(JSON.stringify({ error: e.message, m3u8: [], title: "Error" }), { status: 500 });
+      return new Response(JSON.stringify({ error: e.message, m3u8: [], title: null }), { status: 500 });
     }
 
-    // Return JSON with both the link and the clean anime title
     return new Response(JSON.stringify({ m3u8, title: pageTitle }), {
       headers: { "Content-Type": "application/json" }
     });
